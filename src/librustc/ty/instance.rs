@@ -73,9 +73,12 @@ impl<'tcx> InstanceDef<'tcx> {
         DepConstructor::MirShim(
             Some(self.def_id()).into_iter().chain(
                 ty.flat_map(|t| t.walk()).flat_map(|t| match t.sty {
-                   ty::TyAdt(adt_def, _) => Some(adt_def.did),
-                   ty::TyProjection(ref proj) => Some(proj.trait_ref.def_id),
-                   _ => None,
+                    ty::TyAdt(adt_def, _) => Some(adt_def.did),
+                    ty::TyProjection(ref proj) =>
+                        // FIXME(tschottdorf): prof.item_def_id might be good enough?
+                        // Either way, use of tls::with not appropriate here.
+                        Some(ty::tls::with(|tcx| proj.trait_ref(tcx).def_id)),
+                    _ => None,
                })
             ).collect()
         )

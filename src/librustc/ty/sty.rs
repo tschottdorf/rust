@@ -551,8 +551,8 @@ impl fmt::Debug for TypeFlags {
 /// form this would be written `<T as Trait<..>>::N`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct ProjectionTy<'tcx> {
-    /// The trait reference `T as Trait<..>`.
-    pub trait_ref: ty::TraitRef<'tcx>,
+    /// The parameters of the trait.
+    pub substs: &'tcx Substs<'tcx>,
 
     /// The DefId of the TraitItem for the associated type N.
     ///
@@ -571,13 +571,25 @@ impl<'a, 'tcx> ProjectionTy<'tcx> {
             |item| item.name == item_name).unwrap().def_id;
 
         ProjectionTy {
-            trait_ref: trait_ref,
+            substs: trait_ref.substs,
             item_def_id: item_def_id,
         }
     }
 
-    pub fn item_name(self, tcx: TyCtxt) -> Name {
+    pub fn item_name(&self, tcx: TyCtxt) -> Name {
         tcx.associated_item(self.item_def_id).name
+    }
+
+    pub fn trait_ref(&self, tcx: TyCtxt) -> ty::TraitRef<'tcx> {
+        let def_id = tcx.associated_item(self.item_def_id).container.id();
+        ty::TraitRef {
+            def_id: def_id,
+            substs: self.substs,
+        }
+    }
+
+    pub fn self_ty(&self) -> Ty<'tcx> {
+        self.substs.type_at(0)
     }
 }
 
@@ -861,28 +873,48 @@ pub enum InferTy {
 /// A `ProjectionPredicate` for an `ExistentialTraitRef`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct ExistentialProjection<'tcx> {
-    pub trait_ref: ExistentialTraitRef<'tcx>,
-    pub item_name: Name,
+    pub item_def_id: DefId,
+    pub substs: &'tcx Substs<'tcx>,
     pub ty: Ty<'tcx>,
 }
 
 pub type PolyExistentialProjection<'tcx> = Binder<ExistentialProjection<'tcx>>;
 
 impl<'a, 'tcx, 'gcx> ExistentialProjection<'tcx> {
-    pub fn item_name(&self) -> Name {
-        self.item_name // safe to skip the binder to access a name
+    pub fn from_ty_ref_and_name(
+        tcx: TyCtxt, ty: Ty<'tcx>, trait_ref: ty::ExistentialTraitRef<'tcx>, item_name: Name,
+    ) -> ExistentialProjection<'tcx> {
+        let item_def_id = tcx.associated_items(trait_ref.def_id).find(
+            |item| item.name == item_name).unwrap().def_id;
+
+        ExistentialProjection {
+            ty: ty,
+            item_def_id: item_def_id,
+            substs: trait_ref.substs,
+        }
+    }
+
+    pub fn item_name(&self, tcx: TyCtxt) -> Name {
+        tcx.associated_item(self.item_def_id).name
+    }
+
+    pub fn trait_ref(&self, tcx: TyCtxt) -> ty::ExistentialTraitRef<'tcx> {
+        let def_id = tcx.associated_item(self.item_def_id).container.id();
+        ty::ExistentialTraitRef{
+            def_id: def_id,
+            substs: self.substs,
+        }
     }
 
     pub fn sort_key(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> (DefPathHash, InternedString) {
         // We want something here that is stable across crate boundaries.
         // The DefId isn't but the `deterministic_hash` of the corresponding
         // DefPath is.
-        let trait_def = tcx.trait_def(self.trait_ref.def_id);
-        let def_path_hash = trait_def.def_path_hash;
+        let def_path_hash = tcx.def_path_hash(self.item_def_id);
 
         // An `ast::Name` is also not stable (it's just an index into an
         // interning table), so map to the corresponding `InternedString`.
-        let item_name = self.item_name.as_str();
+        let item_name = self.item_name(tcx).as_str();
         (def_path_hash, item_name)
     }
 
@@ -894,18 +926,19 @@ impl<'a, 'tcx, 'gcx> ExistentialProjection<'tcx> {
         assert!(!self_ty.has_escaping_regions());
 
         ty::ProjectionPredicate {
-            projection_ty: ty::ProjectionTy::from_ref_and_name(
-                tcx,
-                self.trait_ref.with_self_ty(tcx, self_ty),
-                self.item_name),
+            projection_ty: ty::ProjectionTy {
+                item_def_id: self.item_def_id,
+                substs: tcx.mk_substs(
+                iter::once(Kind::from(self_ty)).chain(self.substs.iter().cloned())),
+            },
             ty: self.ty,
         }
     }
 }
 
 impl<'a, 'tcx, 'gcx> PolyExistentialProjection<'tcx> {
-    pub fn item_name(&self) -> Name {
-        self.skip_binder().item_name()
+    pub fn item_name(&self, tcx: TyCtxt) -> Name {
+        self.skip_binder().item_name(tcx)
     }
 
     pub fn sort_key(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> (DefPathHash, InternedString) {
@@ -1384,7 +1417,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
                 substs.substs.regions().collect()
             }
             TyProjection(ref data) => {
-                data.trait_ref.substs.regions().collect()
+                data.substs.regions().collect()
             }
             TyFnDef(..) |
             TyFnPtr(_) |

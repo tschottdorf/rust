@@ -203,9 +203,12 @@ impl<'gcx> DepTrackingMapConfig for ProjectionCache<'gcx> {
         let def_ids: Vec<DefId> =
             key.walk()
                .filter_map(|t| match t.sty {
-                   ty::TyAdt(adt_def, _) => Some(adt_def.did),
-                   ty::TyProjection(ref proj) => Some(proj.trait_ref.def_id),
-                   _ => None,
+                    ty::TyAdt(adt_def, _) => Some(adt_def.did),
+                    ty::TyProjection(ref proj) =>
+                        // FIXME(tschottdorf): prof.item_def_id might be good enough?
+                        // Either way, use of tls::with not appropriate here.
+                        Some(ty::tls::with(|tcx| proj.trait_ref(tcx).def_id)),
+                    _ => None,
                })
                .collect();
 

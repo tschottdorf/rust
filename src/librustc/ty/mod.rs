@@ -1059,7 +1059,7 @@ impl<'tcx> ToPolyTraitRef<'tcx> for PolyProjectionPredicate<'tcx> {
         // This is because here `self` has a `Binder` and so does our
         // return value, so we are preserving the number of binding
         // levels.
-        ty::Binder(self.0.projection_ty.trait_ref)
+        ty::Binder(ty::tls::with(|tcx| self.0.projection_ty.trait_ref(tcx)))
     }
 }
 
@@ -1132,8 +1132,7 @@ impl<'tcx> Predicate<'tcx> {
                 vec![]
             }
             ty::Predicate::Projection(ref data) => {
-                let trait_inputs = data.0.projection_ty.trait_ref.input_types();
-                trait_inputs.chain(Some(data.0.ty)).collect()
+                data.0.projection_ty.substs.types().chain(Some(data.0.ty)).collect()
             }
             ty::Predicate::WellFormed(data) => {
                 vec![data]

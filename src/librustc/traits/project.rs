@@ -365,9 +365,7 @@ pub fn normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
             // information is available.
 
             let tcx = selcx.infcx().tcx;
-            let def_id = tcx.associated_items(projection_ty.trait_ref.def_id).find(|i|
-                i.name == projection_ty.item_name(tcx) && i.kind == ty::AssociatedKind::Type
-            ).map(|i| i.def_id).unwrap();
+            let def_id = projection_ty.item_def_id;
             let ty_var = selcx.infcx().next_ty_var(
                 TypeVariableOrigin::NormalizeProjectionType(tcx.def_span(def_id)));
             let projection = ty::Binder(ty::ProjectionPredicate {
@@ -447,8 +445,8 @@ fn opt_normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
             // normalization. In that case, I think we will want this code:
             //
             // ```
-            // let ty = selcx.tcx().mk_projection(projection_ty.trait_ref,
-            //                                    projection_ty.item_name(tcx);
+            // let ty = selcx.tcx().mk_projection(projection_ty.item_def_id,
+            //                                    projection_ty.substs;
             // return Some(NormalizedTy { value: v, obligations: vec![] });
             // ```
 
@@ -585,15 +583,13 @@ fn normalize_to_error<'a, 'gcx, 'tcx>(selcx: &mut SelectionContext<'a, 'gcx, 'tc
                                       depth: usize)
                                       -> NormalizedTy<'tcx>
 {
-    let trait_ref = projection_ty.trait_ref.to_poly_trait_ref();
+    let trait_ref = projection_ty.trait_ref(selcx.tcx()).to_poly_trait_ref();
     let trait_obligation = Obligation { cause: cause,
                                         recursion_depth: depth,
                                         param_env,
                                         predicate: trait_ref.to_predicate() };
     let tcx = selcx.infcx().tcx;
-    let def_id = tcx.associated_items(projection_ty.trait_ref.def_id).find(|i|
-        i.name == projection_ty.item_name(tcx) && i.kind == ty::AssociatedKind::Type
-    ).map(|i| i.def_id).unwrap();
+    let def_id = projection_ty.item_def_id;
     let new_value = selcx.infcx().next_ty_var(
         TypeVariableOrigin::NormalizeProjectionType(tcx.def_span(def_id)));
     Normalized {
@@ -654,7 +650,7 @@ fn project_type<'cx, 'gcx, 'tcx>(
         selcx.infcx().report_overflow_error(&obligation, true);
     }
 
-    let obligation_trait_ref = &obligation.predicate.trait_ref;
+    let obligation_trait_ref = &obligation.predicate.trait_ref(selcx.tcx());
 
     debug!("project: obligation_trait_ref={:?}", obligation_trait_ref);
 
@@ -743,12 +739,10 @@ fn project_type<'cx, 'gcx, 'tcx>(
                                   &obligation_trait_ref,
                                   candidate)))
         }
-        None => {
-            Ok(ProjectedTy::NoProgress(
-                selcx.tcx().mk_projection(
-                    obligation.predicate.trait_ref.clone(),
-                    obligation.predicate.item_name(selcx.tcx()))))
-        }
+        None => Ok(ProjectedTy::NoProgress(
+                    selcx.tcx().mk_projection(
+                        obligation.predicate.item_def_id,
+                        obligation.predicate.substs)))
     }
 }
 
@@ -788,10 +782,11 @@ fn assemble_candidates_from_trait_def<'cx, 'gcx, 'tcx>(
 {
     debug!("assemble_candidates_from_trait_def(..)");
 
+    let tcx = selcx.tcx();
     // Check whether the self-type is itself a projection.
     let (def_id, substs) = match obligation_trait_ref.self_ty().sty {
         ty::TyProjection(ref data) => {
-            (data.trait_ref.def_id, data.trait_ref.substs)
+            (data.trait_ref(tcx).def_id, data.substs)
         }
         ty::TyAnon(def_id, substs) => (def_id, substs),
         ty::TyInfer(ty::TyVar(_)) => {
@@ -804,9 +799,9 @@ fn assemble_candidates_from_trait_def<'cx, 'gcx, 'tcx>(
     };
 
     // If so, extract what we know from the trait and try to come up with a good answer.
-    let trait_predicates = selcx.tcx().predicates_of(def_id);
-    let bounds = trait_predicates.instantiate(selcx.tcx(), substs);
-    let bounds = elaborate_predicates(selcx.tcx(), bounds.predicates);
+    let trait_predicates = tcx.predicates_of(def_id);
+    let bounds = trait_predicates.instantiate(tcx, substs);
+    let bounds = elaborate_predicates(tcx, bounds.predicates);
     assemble_candidates_from_predicates(selcx,
                                         obligation,
                                         obligation_trait_ref,
@@ -1202,7 +1197,7 @@ fn confirm_callable_candidate<'cx, 'gcx, 'tcx>(
     // Note: we unwrap the binder here but re-create it below (1)
     let ty::Binder((trait_ref, ret_type)) =
         tcx.closure_trait_ref_and_return_type(fn_once_def_id,
-                                              obligation.predicate.trait_ref.self_ty(),
+                                              obligation.predicate.self_ty(),
                                               fn_sig,
                                               flag);
 
@@ -1227,7 +1222,7 @@ fn confirm_param_env_candidate<'cx, 'gcx, 'tcx>(
     let infcx = selcx.infcx();
     let cause = obligation.cause.clone();
     let param_env = obligation.param_env;
-    let trait_ref = obligation.predicate.trait_ref;
+    let trait_ref = obligation.predicate.trait_ref(infcx.tcx);
     match infcx.match_poly_projection_predicate(cause, param_env, poly_projection, trait_ref) {
         Ok(InferOk { value: ty_match, obligations }) => {
             Progress {
@@ -1267,7 +1262,7 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
         // just return TyError.
         debug!("confirm_impl_candidate: no associated type {:?} for {:?}",
                assoc_ty.item.name,
-               obligation.predicate.trait_ref);
+               obligation.predicate);
         tcx.types.err
     } else {
         tcx.type_of(assoc_ty.item.def_id)

@@ -958,9 +958,11 @@ impl<'tcx> fmt::Display for ty::ProjectionPredicate<'tcx> {
 
 impl<'tcx> fmt::Display for ty::ProjectionTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let item_name = ty::tls::with(|tcx| self.item_name(tcx));
+        let (trait_ref, item_name) = ty::tls::with(|tcx|
+            (self.trait_ref(tcx), self.item_name(tcx))
+        );
         write!(f, "{:?}::{}",
-               self.trait_ref,
+               trait_ref,
                item_name)
     }
 }
