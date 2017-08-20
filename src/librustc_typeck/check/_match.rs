@@ -114,9 +114,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 common_type
             }
             PatKind::Binding(ba, def_id, _, ref sub) => {
-                // Note the binding mode in the typeck tables. For now, what we store is always
-                // identical to what could be scraped from the HIR, but this will change with
-                // default binding modes (#42640).
+                // FIXME(tschottdorf): if `ba == hir::BindingAnnotation::Unannotated`, use the
+                // incoming binding mode instead.
                 let bm = ty::BindingMode::convert(ba);
                 self.inh
                     .tables
@@ -165,6 +164,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 self.check_pat_tuple_struct(pat, qpath, &subpats, ddpos, expected)
             }
             PatKind::Path(ref qpath) => {
+                // FIXME(tschottdorf): careful about const ref types.
                 self.check_pat_path(pat, qpath, expected)
             }
             PatKind::Struct(ref qpath, ref fields, etc) => {
@@ -628,6 +628,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         // Type check the path.
         let pat_ty = self.instantiate_value_path(segments, opt_ty, def, pat.span, pat.id);
+        // FIXME(tschottdorf): to handle const refs, should be enough to check whether pat_ty
+        // starts with a TypeVariant::TyRef and if so, not apply const binding modes.
         self.demand_suptype(pat.span, expected, pat_ty);
         pat_ty
     }
@@ -678,6 +680,29 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // Replace constructor type with constructed type for tuple struct patterns.
         let pat_ty = pat_ty.fn_sig(tcx).output();
         let pat_ty = tcx.no_late_bound_regions(&pat_ty).expect("expected fn type");
+
+        // FIXME(tschottdorf): when `k > 0`, implicit & are inserted. Do we want
+        // to demand eqype with TyRef^k(pat_ty) (or Deref^k(expected>?). Also,
+        // must propagate a binding mode into the the calls to `check_pat` below
+        // (and they in turn also need to propagate it again, etc, until a
+        // Binding is hit).
+        //
+        // The state machine for determining the binding mode essentially is
+        // - blank slate: move
+        // - any &val: ref
+        // - all &mut val: ref mut.
+        //
+        // How to propagate the binding mode? Say we're expecting
+        // &Some<Some<...>> here but are matching the pattern
+        // Some(Some(Some(Some(a)))). We could either pass an optional binding
+        // mode to (basically) all the check_pat_x methods, or have each method
+        // obey the contract that if there's a binding mode in the map for them,
+        // they must propagate it. That's less code, but it's brittle and has a
+        // lot of pointless map lookups. Or, we could (write and) call something
+        // like visit_bindings_recursively() that allows us to iter over all
+        // `binding.id`s.
+        let _have_ref = if let ty::TypeVariants::TyRef(_lifetime, _type_and_mut) = expected.sty { true } else { false };
+
         self.demand_eqtype(pat.span, expected, pat_ty);
 
         // Type check subpatterns.

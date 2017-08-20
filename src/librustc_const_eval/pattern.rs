@@ -21,6 +21,7 @@ use rustc::hir::pat_util::EnumerateAndAdjustIterator;
 use rustc_data_structures::indexed_vec::Idx;
 
 use std::fmt;
+use syntax;
 use syntax::ast;
 use syntax::ptr::P;
 use syntax_pos::Span;
@@ -302,8 +303,33 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
         }
     }
 
+    // FIXME(tschottdorf): supposedly here we will check the `pat_adjustments`
+    // table for each pat.id. If we find `k > 0`, prepend
+    // `PatternKind::Deref^k`. We already use the `pat_binding_modes` table.
     pub fn lower_pattern(&mut self, pat: &hir::Pat) -> Pattern<'tcx> {
         let mut ty = self.tables.node_id_to_type(pat.hir_id);
+
+        if let Some(num_implicit_borrows) = self.tables.pat_adjustments().get(pat.hir_id) {
+            let mut new_pat = syntax::ptr::P(pat.clone());
+            for _ in 0..*num_implicit_borrows {
+                // Need to do something to `ty`. The below is incorrect.
+                // Probably involves ty::TypeVariants::TyRef.
+                //
+                // NB: trying to stuff new things into the HIR is probably a bad idea.
+                // Could just change the generated pattern at the end of this method
+                // (which is easier because the HAIR contains less information).
+                new_pat = syntax::ptr::P(hir::Pat {
+                    // hir::PatKind::Ref(P<Pat>, Mutability),
+                     // definitely wrong, how to get a new id?
+                    id: pat.id,
+                    hir_id: pat.hir_id, // ditto.
+                    span: pat.span, // this might be correct
+                    node: PatKind::Ref(new_pat, hir::MutMutable), // mutability needs fixing
+                })
+            }
+        }
+
+        let pat = pat; // lose mutability
 
         let kind = match pat.node {
             PatKind::Wild => PatternKind::Wild,

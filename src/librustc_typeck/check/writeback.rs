@@ -182,6 +182,10 @@ impl<'cx, 'gcx, 'tcx> Visitor<'gcx> for WritebackCx<'cx, 'gcx, 'tcx> {
     }
 
     fn visit_pat(&mut self, p: &'gcx hir::Pat) {
+        // FIXME(tschottdorf): also propagate the pat_adjustments table.
+        //
+        // Arguably both the above and the below should happen outside of this
+        // visitor pattern since we're just copying a map into another map.
         match p.node {
             hir::PatKind::Binding(..) => {
                 let bm = *self.fcx

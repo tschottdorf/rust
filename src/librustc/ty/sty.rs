@@ -156,6 +156,18 @@ pub enum TypeVariants<'tcx> {
     TyAnon(DefId, &'tcx Substs<'tcx>),
 
     /// A type parameter; for example, `T` in `fn f<T>(x: T) {}
+    ///
+    /// FIXME(tschottdorf): careful about the case in which the underlying ParamTy
+    /// is a ref. Can anything go wrong?
+    ///
+    /// ```
+    /// fn main() {
+    ///     fn foo<T>(t: T) {
+    ///         match t { _ => (), };
+    ///     }
+    ///     foo(&5u8);
+    /// }
+    /// ```
     TyParam(ParamTy),
 
     /// A type variable used during type-checking.

@@ -552,6 +552,8 @@ pub struct FnCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     enclosing_breakables: RefCell<EnclosingBreakables<'gcx, 'tcx>>,
 
     inh: &'a Inherited<'a, 'gcx, 'tcx>,
+
+    _pat_adjustments: NodeMap<u64>,
 }
 
 impl<'a, 'gcx, 'tcx> Deref for FnCtxt<'a, 'gcx, 'tcx> {
@@ -1709,6 +1711,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 by_id: NodeMap(),
             }),
             inh,
+            _pat_adjustments: NodeMap(),
         }
     }
 
